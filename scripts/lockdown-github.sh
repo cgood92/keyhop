@@ -91,12 +91,18 @@ gh api \
 }
 EOF
 
-echo "5) Restricting GitHub Actions fork PRs (require approval for external contributors)..."
+echo "5) Restricting GitHub Actions fork PRs (require approval for all external contributors)..."
 gh api \
   --method PUT \
   -H "Accept: application/vnd.github+json" \
   "/repos/$REPO/actions/permissions" \
-  -f enabled=true \
+  -F enabled=true \
   -f allowed_actions=all >/dev/null || true
+
+gh api \
+  --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  "/repos/$REPO/actions/permissions/fork-pr-contributor-approval" \
+  -f approval_policy=all_external_contributors >/dev/null || true
 
 echo "Done! $REPO is configured for GitHub Pages and locked down to $OWNER on main."
