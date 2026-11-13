@@ -219,7 +219,7 @@ export function CalibrationView({
   };
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden p-4 sm:p-6">
+    <div className="relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden p-4 sm:p-6 short:p-2.5">
       <ThemeBackdrop theme={theme} />
 
       {/* Top Bar */}
@@ -283,11 +283,12 @@ export function CalibrationView({
       </header>
 
       {/* Center Staff with G4 Bubble */}
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden">
-        <div className="h-[54dvh] w-full max-w-4xl">
+      <main className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-hidden">
+        <div className="min-h-0 w-full flex-1">
           <StaffCanvas
             clefMode="treble"
             activeNote={{ note: 'G4', staff: 'treble' }}
+            noteTargets={[{ note: 'G4', staff: 'treble' }]}
             theme={theme}
             showLandmarks={settings.landmarkHints}
             calibrationPrompt="Play G to Start!"
@@ -308,7 +309,7 @@ export function CalibrationView({
       </main>
 
       {/* Bottom Meter & Skip Button */}
-      <footer className="relative z-10 flex flex-col items-center gap-3 pb-1">
+      <footer className="relative z-10 flex flex-col items-center gap-3 pb-1 short:flex-row short:justify-center short:gap-3 short:pb-0">
         {settings.inputMode === 'mic' ? (
           <MicMeter
             rms={rms}

@@ -497,7 +497,11 @@ export function GameplayView({
     : 0;
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden p-3 sm:p-5">
+    <div
+      className={`relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden ${
+        isFullscreen ? 'p-1.5 sm:p-2.5' : 'p-2 sm:p-3 short:p-1.5'
+      }`}
+    >
       <ThemeBackdrop theme={theme} />
 
       {/* Top HUD */}
@@ -582,12 +586,13 @@ export function GameplayView({
         </div>
       </header>
 
-      {/* Main Musical Staff Stage (~68% viewport height) */}
-      <main className="relative z-10 flex flex-1 items-center justify-center overflow-hidden px-2">
-        <div className="h-[66dvh] w-full max-w-5xl">
+      {/* Main Musical Staff Stage (fills all available viewport space) */}
+      <main className="relative z-10 flex min-h-0 flex-1 items-center justify-center overflow-hidden px-1 sm:px-2">
+        <div className="h-full w-full">
           <StaffCanvas
             clefMode={level.clef}
             activeNote={currentNote}
+            noteTargets={level.notes}
             noteKey={currentIndex}
             theme={theme}
             showLandmarks={settings.landmarkHints}

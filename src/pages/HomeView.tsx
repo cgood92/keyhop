@@ -39,7 +39,7 @@ export function HomeView({
   const totalCards = activeLevel.notes.length * activeLevel.repeats;
 
   return (
-    <div className="relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden p-4 sm:p-6">
+    <div className="relative flex h-[100dvh] w-full flex-col justify-between overflow-hidden p-4 sm:p-6 short:p-2.5">
       <ThemeBackdrop theme={theme} />
 
       {/* Top Bar */}
@@ -64,23 +64,23 @@ export function HomeView({
           type="button"
           onClick={onOpenSettings}
           aria-label="Open settings"
-          className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-800 shadow-lg transition hover:scale-105 active:scale-95"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-800 shadow-lg transition hover:scale-105 active:scale-95 short:h-9 short:w-9"
         >
           <Settings size={22} />
         </button>
       </header>
 
       {/* Center Hero: Title + Play CTA */}
-      <main className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5 sm:gap-7">
-        <div className="flex flex-col items-center text-center">
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/20 px-3.5 py-1 text-xs font-extrabold uppercase tracking-widest text-white backdrop-blur">
+      <main className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5 sm:gap-7 short:flex-row short:gap-10">
+        <div className="flex flex-col items-center text-center short:items-start short:text-left">
+          <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/20 px-3.5 py-1 text-xs font-extrabold uppercase tracking-widest text-white backdrop-blur short:mb-1">
             <Music size={14} />
             <span>Piano Sight-Reading</span>
           </div>
-          <h1 className="text-5xl font-black tracking-tight text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.45)] sm:text-7xl">
+          <h1 className="text-5xl font-black tracking-tight text-white drop-shadow-[0_4px_12px_rgba(0,0,0,0.45)] sm:text-7xl short:text-5xl">
             Key<span className="text-amber-300">Hop</span>
           </h1>
-          <p className="mt-1.5 text-sm font-semibold text-white/85 drop-shadow sm:text-base">
+          <p className="mt-1.5 text-sm font-semibold text-white/85 drop-shadow sm:text-base short:mt-0.5 short:text-xs">
             Play the note on your piano to hop to the next!
           </p>
         </div>
@@ -91,24 +91,24 @@ export function HomeView({
           whileHover={{ scale: 1.07 }}
           whileTap={{ scale: 0.94 }}
           aria-label="Start practicing"
-          className="group relative flex h-28 w-28 items-center justify-center rounded-full bg-amber-300 shadow-[0_12px_35px_rgba(0,0,0,0.38)] ring-8 ring-white/30 transition sm:h-32 sm:w-32"
+          className="group relative flex h-28 w-28 items-center justify-center rounded-full bg-amber-300 shadow-[0_12px_35px_rgba(0,0,0,0.38)] ring-8 ring-white/30 transition sm:h-32 sm:w-32 short:h-22 short:w-22 short:ring-4"
         >
           <Play
             size={54}
-            className="translate-x-1 fill-emerald-600 text-emerald-700 transition-transform group-hover:scale-105"
+            className="translate-x-1 fill-emerald-600 text-emerald-700 transition-transform group-hover:scale-105 short:h-10 short:w-10"
           />
         </motion.button>
       </main>
 
       {/* Bottom: Theme Carousel + Active Level Card */}
-      <footer className="relative z-10 flex flex-col items-center gap-3 pb-1">
+      <footer className="relative z-10 flex flex-col items-center gap-3 pb-1 short:gap-1.5 short:pb-0">
         <ThemeCarousel selectedTheme={theme} onSelectTheme={onSelectTheme} />
 
         <div className="flex w-full max-w-xl items-stretch gap-2">
           <button
             type="button"
             onClick={onOpenLevels}
-            className="flex flex-1 items-center justify-between gap-3 rounded-2xl bg-white/95 px-4 py-3 text-left text-slate-900 shadow-xl backdrop-blur transition hover:bg-white active:scale-[0.99]"
+            className="flex flex-1 items-center justify-between gap-3 rounded-2xl bg-white/95 px-4 py-3 text-left text-slate-900 shadow-xl backdrop-blur transition hover:bg-white active:scale-[0.99] short:py-2"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">

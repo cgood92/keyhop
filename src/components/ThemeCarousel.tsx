@@ -9,7 +9,7 @@ interface ThemeCarouselProps {
 
 export function ThemeCarousel({ selectedTheme, onSelectTheme }: ThemeCarouselProps) {
   return (
-    <div className="no-scrollbar w-full max-w-4xl overflow-x-auto py-3">
+    <div className="no-scrollbar w-full max-w-4xl overflow-x-auto py-3.5 short:py-3">
       <div className="mx-auto flex w-max items-center gap-3.5 px-6">
         {THEMES.map((t) => {
           const active = t.id === selectedTheme;
@@ -20,19 +20,19 @@ export function ThemeCarousel({ selectedTheme, onSelectTheme }: ThemeCarouselPro
               onClick={() => onSelectTheme(t.id)}
               title={`${t.name} — ${t.tagline}`}
               aria-pressed={active}
-              className={`group relative flex shrink-0 flex-col items-center gap-1.5 transition-transform focus:outline-none ${
+              className={`group relative flex shrink-0 flex-col items-center gap-1.5 transition-transform focus:outline-none short:gap-0.5 ${
                 active ? 'scale-110' : 'opacity-80 hover:scale-105 hover:opacity-100'
               }`}
             >
               <div
-                className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all ${
+                className={`flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all short:h-10 short:w-10 ${
                   active
                     ? 'ring-4 ring-amber-300 ring-offset-2 ring-offset-slate-900/40'
                     : 'ring-2 ring-white/40'
                 }`}
                 style={{ background: t.previewBg }}
               >
-                <svg viewBox="-22 -18 44 36" className="h-9 w-11 overflow-visible">
+                <svg viewBox="-22 -18 44 36" className="h-9 w-11 overflow-visible short:h-7 short:w-8">
                   <ThemedNotehead theme={t.id} />
                 </svg>
               </div>

@@ -1,7 +1,10 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { PIANO_LANDMARKS } from '../music/landmarks';
 import {
+  BASS_BOTTOM_STEP,
   BASS_TOP_STEP,
+  TREBLE_BOTTOM_STEP,
   TREBLE_TOP_STEP,
   getLedgerSteps,
   parseNoteTarget,
@@ -14,10 +17,15 @@ import { getThemeConfig } from '../themes/themeRegistry';
 
 const LINE_GAP = 20;
 const HALF_STEP = LINE_GAP / 2; // 10 SVG units per diatonic step
+const FIVE_LINE_HEIGHT = LINE_GAP * 4; // 80 SVG units from top line to bottom line
+const DEFAULT_VIEWBOX_WIDTH = 680;
+const MIN_VIEWBOX_WIDTH = 440;
+const MAX_VIEWBOX_WIDTH = 1400;
 
 interface StaffCanvasProps {
   clefMode: ClefMode;
   activeNote: NoteTarget | null;
+  noteTargets?: NoteTarget[];
   noteKey?: string | number;
   theme: ThemeId;
   showLandmarks: boolean;
@@ -38,9 +46,82 @@ function stepToStaffY(
   return bassTopY + (BASS_TOP_STEP - diatonicStep) * HALF_STEP;
 }
 
+function computeStaffVerticalLayout(
+  clefMode: ClefMode,
+  noteTargets?: NoteTarget[],
+  activeNote?: NoteTarget | null
+): { viewBoxHeight: number; trebleTopY: number; bassTopY: number } {
+  let trebleTopExtent = 0;
+  let trebleBottomExtent = 0;
+  let bassTopExtent = 0;
+  let bassBottomExtent = 0;
+
+  const pool = noteTargets && noteTargets.length > 0 ? [...noteTargets] : [];
+  if (activeNote) {
+    pool.push(activeNote);
+  }
+
+  if (noteTargets && noteTargets.length > 0) {
+    for (const target of pool) {
+      const step = parseNoteTarget(target.note).diatonicStep;
+      const side = resolveStaffSide(target, clefMode);
+      if (side === 'treble') {
+        trebleTopExtent = Math.max(trebleTopExtent, (step - TREBLE_TOP_STEP) * HALF_STEP);
+        trebleBottomExtent = Math.max(trebleBottomExtent, (TREBLE_BOTTOM_STEP - step) * HALF_STEP);
+      } else {
+        bassTopExtent = Math.max(bassTopExtent, (step - BASS_TOP_STEP) * HALF_STEP);
+        bassBottomExtent = Math.max(bassBottomExtent, (BASS_BOTTOM_STEP - step) * HALF_STEP);
+      }
+    }
+  } else if (clefMode === 'grand') {
+    trebleTopExtent = 40;
+    trebleBottomExtent = 20;
+    bassTopExtent = 20;
+    bassBottomExtent = 40;
+  } else if (clefMode === 'treble') {
+    trebleTopExtent = 60;
+    trebleBottomExtent = 40;
+  } else {
+    bassTopExtent = 40;
+    bassBottomExtent = 60;
+  }
+
+  if (clefMode === 'grand') {
+    const topPad = Math.max(26, trebleTopExtent + 22);
+    const bottomPad = Math.max(22, bassBottomExtent + 22);
+    const middleGap = Math.max(52, trebleBottomExtent + bassTopExtent + 10);
+    const trebleTopY = topPad;
+    const bassTopY = trebleTopY + FIVE_LINE_HEIGHT + middleGap;
+    return {
+      trebleTopY,
+      bassTopY,
+      viewBoxHeight: bassTopY + FIVE_LINE_HEIGHT + bottomPad,
+    };
+  }
+
+  if (clefMode === 'treble') {
+    const topPad = Math.max(26, trebleTopExtent + 22);
+    const bottomPad = Math.max(30, trebleBottomExtent + 22);
+    return {
+      trebleTopY: topPad,
+      bassTopY: topPad,
+      viewBoxHeight: topPad + FIVE_LINE_HEIGHT + bottomPad,
+    };
+  }
+
+  const topPad = Math.max(22, bassTopExtent + 22);
+  const bottomPad = Math.max(22, bassBottomExtent + 22);
+  return {
+    trebleTopY: topPad,
+    bassTopY: topPad,
+    viewBoxHeight: topPad + FIVE_LINE_HEIGHT + bottomPad,
+  };
+}
+
 export function StaffCanvas({
   clefMode,
   activeNote,
+  noteTargets,
   noteKey,
   theme,
   showLandmarks,
@@ -51,13 +132,42 @@ export function StaffCanvas({
   const themeCfg = getThemeConfig(theme);
   const isGrand = clefMode === 'grand';
 
-  const viewBoxHeight = isGrand ? 460 : 280;
-  const trebleTopY = isGrand ? 110 : 100;
-  const bassTopY = isGrand ? 260 : 100;
+  const { viewBoxHeight, trebleTopY, bassTopY } = useMemo(
+    () => computeStaffVerticalLayout(clefMode, noteTargets, activeNote),
+    [clefMode, noteTargets, activeNote]
+  );
 
-  const staffLeft = 72;
-  const staffRight = 640;
-  const noteX = 395;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [viewBoxWidth, setViewBoxWidth] = useState(DEFAULT_VIEWBOX_WIDTH);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const updateWidth = (width: number, height: number) => {
+      if (height <= 0 || width <= 0) return;
+      const aspectWidth = Math.round(viewBoxHeight * (width / height));
+      const clamped = Math.max(MIN_VIEWBOX_WIDTH, Math.min(MAX_VIEWBOX_WIDTH, aspectWidth));
+      setViewBoxWidth((prev) => (prev === clamped ? prev : clamped));
+    };
+
+    const rect = el.getBoundingClientRect();
+    updateWidth(rect.width, rect.height);
+
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      updateWidth(entry.contentRect.width, entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [viewBoxHeight]);
+
+  const staffLeft = 64;
+  const staffRight = viewBoxWidth - 32;
+  const landmarkBadgeX = staffLeft + 88;
+  const noteX = Math.round(Math.max(290, (landmarkBadgeX + 16 + staffRight) / 2));
 
   const renderFiveLines = (topY: number, keyPrefix: string) =>
     [0, 1, 2, 3, 4].map((idx) => (
@@ -95,90 +205,91 @@ export function StaffCanvas({
   }
 
   return (
-    <svg
-      viewBox={`0 0 680 ${viewBoxHeight}`}
-      className="h-full w-full max-w-4xl select-none overflow-visible drop-shadow-sm"
-      role="img"
-      aria-label={activeNote ? `Target piano note ${activeNote.note}` : 'Music staff'}
-    >
-      {/* Layer 1: Landmark Highlight Bands (behind staff lines) */}
-      {visibleLandmarks.map((lm) => {
-        const targetStaff: StaffSide =
-          clefMode === 'bass' && lm.id === 'middle-c' ? 'bass' : lm.staff;
-        const y = stepToStaffY(lm.diatonicStep, targetStaff, trebleTopY, bassTopY);
-        const bandHeight = lm.isLine ? 12 : 16;
-        return (
-          <rect
-            key={`${lm.id}-band`}
-            x={staffLeft + 74}
-            y={y - bandHeight / 2}
-            width={staffRight - (staffLeft + 84)}
-            height={bandHeight}
-            rx={bandHeight / 2}
-            fill={themeCfg.landmarkColor}
-          />
-        );
-      })}
-
-      {/* Layer 2: Staff Lines & Clefs */}
-      {(clefMode === 'treble' || isGrand) && renderFiveLines(trebleTopY, 'treble')}
-      {(clefMode === 'bass' || isGrand) && renderFiveLines(bassTopY, 'bass')}
-
-      {/* Left Bar Line & Grand Brace */}
-      <line
-        x1={staffLeft}
-        y1={clefMode === 'bass' ? bassTopY : trebleTopY}
-        x2={staffLeft}
-        y2={clefMode === 'treble' ? trebleTopY + 80 : bassTopY + 80}
-        stroke={themeCfg.staffStroke}
-        strokeWidth="3.2"
-      />
-
-      {isGrand && (
-        <GrandStaffBrace
-          x={46}
-          trebleTopY={trebleTopY}
-          bassBottomY={bassTopY + 80}
-          stroke={themeCfg.staffStroke}
-        />
-      )}
-
-      {/* Clef Glyphs */}
-      {(clefMode === 'treble' || isGrand) && (
-        <TrebleClefGlyph x={95} topY={trebleTopY} fill={themeCfg.clefFill} />
-      )}
-      {(clefMode === 'bass' || isGrand) && (
-        <BassClefGlyph x={95} topY={bassTopY} fill={themeCfg.clefFill} />
-      )}
-
-      {/* Layer 3: Landmark Letter Badges (opaque, painted cleanly ABOVE staff lines) */}
-      {visibleLandmarks.map((lm) => {
-        const targetStaff: StaffSide =
-          clefMode === 'bass' && lm.id === 'middle-c' ? 'bass' : lm.staff;
-        const y = stepToStaffY(lm.diatonicStep, targetStaff, trebleTopY, bassTopY);
-        return (
-          <g key={`${lm.id}-badge`}>
-            <circle
-              cx={staffLeft + 92}
-              cy={y}
-              r="11"
-              fill="#d97706"
-              stroke="#ffffff"
-              strokeWidth="1.8"
+    <div ref={containerRef} className="flex h-full w-full items-center justify-center">
+      <svg
+        viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+        className="h-full w-full select-none overflow-visible drop-shadow-sm"
+        role="img"
+        aria-label={activeNote ? `Target piano note ${activeNote.note}` : 'Music staff'}
+      >
+        {/* Layer 1: Landmark Highlight Bands (behind staff lines) */}
+        {visibleLandmarks.map((lm) => {
+          const targetStaff: StaffSide =
+            clefMode === 'bass' && lm.id === 'middle-c' ? 'bass' : lm.staff;
+          const y = stepToStaffY(lm.diatonicStep, targetStaff, trebleTopY, bassTopY);
+          const bandHeight = lm.isLine ? 12 : 16;
+          return (
+            <rect
+              key={`${lm.id}-band`}
+              x={staffLeft + 70}
+              y={y - bandHeight / 2}
+              width={staffRight - (staffLeft + 80)}
+              height={bandHeight}
+              rx={bandHeight / 2}
+              fill={themeCfg.landmarkColor}
             />
-            <text
-              x={staffLeft + 92}
-              y={y + 4.5}
-              textAnchor="middle"
-              fontSize="13"
-              fontWeight="800"
-              fill="#ffffff"
-            >
-              {lm.label}
-            </text>
-          </g>
-        );
-      })}
+          );
+        })}
+
+        {/* Layer 2: Staff Lines & Clefs */}
+        {(clefMode === 'treble' || isGrand) && renderFiveLines(trebleTopY, 'treble')}
+        {(clefMode === 'bass' || isGrand) && renderFiveLines(bassTopY, 'bass')}
+
+        {/* Left Bar Line & Grand Brace */}
+        <line
+          x1={staffLeft}
+          y1={clefMode === 'bass' ? bassTopY : trebleTopY}
+          x2={staffLeft}
+          y2={clefMode === 'treble' ? trebleTopY + 80 : bassTopY + 80}
+          stroke={themeCfg.staffStroke}
+          strokeWidth="3.2"
+        />
+
+        {isGrand && (
+          <GrandStaffBrace
+            x={40}
+            trebleTopY={trebleTopY}
+            bassBottomY={bassTopY + 80}
+            stroke={themeCfg.staffStroke}
+          />
+        )}
+
+        {/* Clef Glyphs */}
+        {(clefMode === 'treble' || isGrand) && (
+          <TrebleClefGlyph x={86} topY={trebleTopY} fill={themeCfg.clefFill} />
+        )}
+        {(clefMode === 'bass' || isGrand) && (
+          <BassClefGlyph x={86} topY={bassTopY} fill={themeCfg.clefFill} />
+        )}
+
+        {/* Layer 3: Landmark Letter Badges (opaque, painted cleanly ABOVE staff lines) */}
+        {visibleLandmarks.map((lm) => {
+          const targetStaff: StaffSide =
+            clefMode === 'bass' && lm.id === 'middle-c' ? 'bass' : lm.staff;
+          const y = stepToStaffY(lm.diatonicStep, targetStaff, trebleTopY, bassTopY);
+          return (
+            <g key={`${lm.id}-badge`}>
+              <circle
+                cx={landmarkBadgeX}
+                cy={y}
+                r="11"
+                fill="#d97706"
+                stroke="#ffffff"
+                strokeWidth="1.8"
+              />
+              <text
+                x={landmarkBadgeX}
+                y={y + 4.5}
+                textAnchor="middle"
+                fontSize="13"
+                fontWeight="800"
+                fill="#ffffff"
+              >
+                {lm.label}
+              </text>
+            </g>
+          );
+        })}
 
       {/* Hit Burst Particles */}
       <AnimatePresence>
@@ -281,6 +392,7 @@ export function StaffCanvas({
           </motion.g>
         )}
       </AnimatePresence>
-    </svg>
+      </svg>
+    </div>
   );
 }

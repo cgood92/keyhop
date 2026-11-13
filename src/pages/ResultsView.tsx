@@ -44,7 +44,7 @@ export function ResultsView({
         initial={{ scale: 0.88, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
-        className="relative z-10 flex w-full max-w-md flex-col items-center rounded-3xl bg-slate-900/80 p-6 text-center text-white shadow-2xl backdrop-blur-md border border-white/20 sm:p-8"
+        className="relative z-10 flex w-full max-w-md flex-col items-center rounded-3xl bg-slate-900/80 p-6 text-center text-white shadow-2xl backdrop-blur-md border border-white/20 sm:p-8 short:p-4 short:scale-90"
       >
         {/* Ribbon Banner */}
         <div className="-mt-11 mb-5 rounded-full bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-400 px-8 py-2 text-2xl font-black tracking-wider text-slate-950 shadow-xl ring-4 ring-white/40">

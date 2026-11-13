@@ -9,6 +9,28 @@ interface FullscreenEl extends HTMLElement {
   webkitRequestFullscreen?: () => Promise<void>;
 }
 
+async function lockLandscapeOrientation(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  const orientation = window.screen?.orientation;
+  if (typeof orientation?.lock !== 'function') return;
+  try {
+    await orientation.lock('landscape');
+  } catch {
+    // Desktop browsers, iOS Safari, or OS policies may disallow orientation lock
+  }
+}
+
+function unlockOrientation(): void {
+  if (typeof window === 'undefined') return;
+  const orientation = window.screen?.orientation;
+  if (typeof orientation?.unlock !== 'function') return;
+  try {
+    orientation.unlock();
+  } catch {
+    // Ignore cleanly
+  }
+}
+
 export function useFullscreen() {
   const [isFullscreen, setIsFullscreen] = useState<boolean>(() => {
     if (typeof document === 'undefined') return false;
@@ -28,7 +50,13 @@ export function useFullscreen() {
   useEffect(() => {
     const onChange = () => {
       const doc = document as FullscreenDoc;
-      setIsFullscreen(Boolean(doc.fullscreenElement || doc.webkitFullscreenElement));
+      const active = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFullscreen(active);
+      if (active) {
+        void lockLandscapeOrientation();
+      } else {
+        unlockOrientation();
+      }
     };
     document.addEventListener('fullscreenchange', onChange);
     document.addEventListener('webkitfullscreenchange', onChange);
@@ -46,6 +74,7 @@ export function useFullscreen() {
       } else if (el.webkitRequestFullscreen) {
         await el.webkitRequestFullscreen();
       }
+      await lockLandscapeOrientation();
     } catch {
       // Ignore user-gesture or OS restrictions cleanly
     }
@@ -59,6 +88,7 @@ export function useFullscreen() {
       } else if (doc.webkitExitFullscreen && doc.webkitFullscreenElement) {
         await doc.webkitExitFullscreen();
       }
+      unlockOrientation();
     } catch {
       // Ignore cleanly
     }
