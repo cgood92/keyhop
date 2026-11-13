@@ -1,11 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateCalibrationSamples } from '../audio/calibration';
-import { NoteTracker, resolvePianoOctave } from '../audio/dspFilters';
+import { detectYinPitch, NoteTracker, resolvePianoOctave } from '../audio/dspFilters';
 
 function makeSineBuffer(freqHz: number, sampleRate: number, length: number, amp = 0.25): Float32Array {
   const buf = new Float32Array(length);
   for (let i = 0; i < length; i += 1) {
     buf[i] = amp * Math.sin((2 * Math.PI * freqHz * i) / sampleRate);
+  }
+  return buf;
+}
+
+function makeMixedBuffer(
+  partials: Array<[number, number]>,
+  sampleRate: number,
+  length: number
+): Float32Array {
+  const buf = new Float32Array(length);
+  for (let i = 0; i < length; i += 1) {
+    const t = i / sampleRate;
+    let sum = 0;
+    for (const [freqHz, amp] of partials) {
+      sum += amp * Math.sin(2 * Math.PI * freqHz * t);
+    }
+    buf[i] = sum;
   }
   return buf;
 }
@@ -110,5 +127,113 @@ describe('audio DSP & calibration', () => {
     const wrong = evaluateCalibrationSamples([{ pitchHz: 261.63, clarity: 0.98 }], 'G4');
     expect(wrong.matchedTarget).toBe(false);
     expect(wrong.heardNoteName).toBe('C4');
+  });
+
+  it('keeps YIN accurate on filtered audio and folds attack subharmonics up to true pitch', () => {
+    const g3Buf = makeMixedBuffer(
+      [
+        [196.0, 0.08],
+        [392.0, 0.03],
+        [98.0, 0.006],
+      ],
+      sampleRate,
+      bufSize
+    );
+    const yin = detectYinPitch(g3Buf, sampleRate);
+    expect(yin).not.toBeNull();
+    expect(yin!).toBeCloseTo(196.0, 0);
+
+    // G4 attack with 98 Hz keybed thump: must fold 4x (98 -> 392) because 2f and 3f are absent
+    const g4WithThump = makeMixedBuffer(
+      [
+        [98.0, 0.008],
+        [392.0, 0.025],
+      ],
+      sampleRate,
+      bufSize
+    );
+    expect(resolvePianoOctave(g4WithThump, 98.0, 98.0, sampleRate)).toBeCloseTo(392.0, 1);
+
+    // F3 attack locked onto 87.3 Hz subharmonic without 3*87.3=262Hz partial: must fold up to 174.6 Hz
+    const f3WithThump = makeMixedBuffer(
+      [
+        [87.3, 0.004],
+        [174.6, 0.064],
+        [349.2, 0.046],
+      ],
+      sampleRate,
+      bufSize
+    );
+    expect(resolvePianoOctave(f3WithThump, 87.3, 87.3, sampleRate)).toBeCloseTo(174.6, 1);
+
+    // B3 (246.9 Hz) must not be halved by 123.5 Hz room noise without 1.5x (370 Hz) partial
+    const b3WithHum = makeMixedBuffer(
+      [
+        [246.94, 0.04],
+        [123.47, 0.015],
+      ],
+      sampleRate,
+      bufSize
+    );
+    expect(resolvePianoOctave(b3WithHum, 123.47, 123.47, sampleRate)).toBeCloseTo(246.94, 1);
+
+    // Missing-fundamental ghost periodicity (466 Hz + 622 Hz with empty 155.5 Hz / 311 Hz) -> null
+    const ghost155 = makeMixedBuffer(
+      [
+        [466.5, 0.015],
+        [622.0, 0.015],
+      ],
+      sampleRate,
+      bufSize
+    );
+    expect(resolvePianoOctave(ghost155, 155.5, 155.5, sampleRate)).toBeNull();
+  });
+
+  it('does not re-trigger dying notes near rmsThreshold and rejects <25ms transient chirps', () => {
+    const tracker = new NoteTracker({
+      rmsThreshold: 0.015,
+      clarityThreshold: 0.8,
+      requiredStableFrames: 3,
+      minStableMs: 55,
+      sameNoteCooldownMs: 340,
+    });
+
+    const f3Loud = makeSineBuffer(174.61, sampleRate, bufSize, 0.12);
+    expect(tracker.processFrame(f3Loud, sampleRate, 100).emittedMidi).toBeNull();
+    expect(tracker.processFrame(f3Loud, sampleRate, 125).emittedMidi).toBeNull();
+    expect(tracker.processFrame(f3Loud, sampleRate, 160).emittedMidi).toBe(53); // F3
+
+    // Decaying F3 passing just above rmsThreshold (0.015 * 1.1 = 0.0165 RMS) must NEVER re-arm/re-emit
+    const f3Dying = makeSineBuffer(174.61, sampleRate, bufSize, 0.0235);
+    expect(tracker.processFrame(f3Dying, sampleRate, 600).emittedMidi).toBeNull();
+    expect(tracker.processFrame(f3Dying, sampleRate, 630).emittedMidi).toBeNull();
+    expect(tracker.processFrame(f3Dying, sampleRate, 660).emittedMidi).toBeNull();
+
+    // Drop below gate to re-arm, then inject a 15ms 1164 Hz click inside the first half of the buffer
+    tracker.processFrame(new Float32Array(bufSize), sampleRate, 700);
+    const clickBuf = new Float32Array(bufSize);
+    for (let i = 1000; i < 1720; i += 1) {
+      clickBuf[i] = 0.15 * Math.sin((2 * Math.PI * 1164 * i) / sampleRate);
+    }
+    expect(tracker.processFrame(clickBuf, sampleRate, 800).emittedMidi).toBeNull();
+    expect(tracker.processFrame(clickBuf, sampleRate, 830).emittedMidi).toBeNull();
+    expect(tracker.processFrame(clickBuf, sampleRate, 865).emittedMidi).toBeNull();
+  });
+
+  it('adapts ambient noise floor to ignore steady ~0.008 background hum', () => {
+    const tracker = new NoteTracker({
+      rmsThreshold: 0.003,
+      clarityThreshold: 0.8,
+      requiredStableFrames: 3,
+      minStableMs: 55,
+    });
+    // ~0.0085 RMS steady 110 Hz hum should adapt noiseFloor and remain blocked
+    const hum = makeSineBuffer(110, sampleRate, bufSize, 0.012);
+    for (let i = 0; i < 20; i += 1) {
+      const res = tracker.processFrame(hum, sampleRate, 100 + i * 20);
+      if (i >= 5) {
+        expect(res.emittedMidi).toBeNull();
+      }
+    }
   });
 });

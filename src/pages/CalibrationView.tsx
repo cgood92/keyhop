@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { HelpCircle, Mic, SkipForward, Usb, X } from 'lucide-react';
 import { Note } from 'tonal';
 import { PitchEngine } from '../audio/PitchEngine';
+import {
+  DebugSessionRecorder,
+  isDebugModeEnabled,
+} from '../audio/debugRecorder';
 import { evaluateCalibrationSamples } from '../audio/calibration';
 import type { CalibrationSample } from '../audio/calibration';
 import { MicMeter } from '../components/MicMeter';
@@ -35,9 +39,13 @@ export function CalibrationView({
 
   const pitchEngineRef = useRef<PitchEngine | null>(null);
   const samplesRef = useRef<CalibrationSample[]>([]);
+  const sampleMidiRef = useRef<number | null>(null);
+  const lastSampleTsRef = useRef<number>(0);
+  const noteEmittedRef = useRef(false);
   const completedRef = useRef(false);
 
   const midiSupported = isWebMidiSupported();
+  const debugEnabled = isDebugModeEnabled();
 
   // Microphone listener during calibration
   useEffect(() => {
@@ -48,35 +56,83 @@ export function CalibrationView({
 
     completedRef.current = false;
     samplesRef.current = [];
+    sampleMidiRef.current = null;
+    lastSampleTsRef.current = 0;
+    noteEmittedRef.current = false;
+
+    let recorder: DebugSessionRecorder | null = null;
+    if (debugEnabled) {
+      recorder = new DebugSessionRecorder('calibration', 'G4');
+      recorder.start({
+        screen: 'calibration',
+        referenceNote: 'G4',
+        micSensitivity: settings.micSensitivity,
+        micClarityThreshold: settings.micClarityThreshold,
+      });
+    }
 
     const engine = new PitchEngine({
       rmsThreshold: settings.micSensitivity,
       clarityThreshold: settings.micClarityThreshold,
       requiredStableFrames: 3,
+      minStableMs: 42,
+      debug: debugEnabled,
     });
     pitchEngineRef.current = engine;
 
     engine
       .start({
+        onReady: (info) => {
+          recorder?.updateAudioInfo(info);
+        },
+        onRawAudio: debugEnabled
+          ? (samples, sr) => {
+              recorder?.pushRawAudio(samples, sr);
+            }
+          : undefined,
         onFrame: (analysis) => {
           setRms(analysis.rms);
           if (analysis.activeMidi !== null) {
             setHeardNote(Note.fromMidi(analysis.activeMidi) || '');
           }
+          recorder?.pushEvent({
+            type: 'calibration_frame',
+            analysis,
+          });
           if (
             !completedRef.current &&
             analysis.activeMidi !== null &&
             analysis.pitchHz !== null &&
             analysis.clarity >= settings.micClarityThreshold
           ) {
+            const nowTs = analysis.debug?.timestampMs ?? performance.now();
+            if (
+              sampleMidiRef.current === null ||
+              Math.abs(analysis.activeMidi - sampleMidiRef.current) > 1 ||
+              nowTs - lastSampleTsRef.current > 200
+            ) {
+              samplesRef.current = [];
+              sampleMidiRef.current = analysis.activeMidi;
+              noteEmittedRef.current = false;
+            }
+            if (analysis.emittedMidi !== null) {
+              noteEmittedRef.current = true;
+            }
+            lastSampleTsRef.current = nowTs;
             samplesRef.current.push({
               pitchHz: analysis.pitchHz,
               clarity: analysis.clarity,
             });
-            if (samplesRef.current.length >= 4) {
+            if (noteEmittedRef.current && samplesRef.current.length >= 4) {
               const outcome = evaluateCalibrationSamples(samplesRef.current, 'G4');
+              recorder?.pushEvent({
+                type: 'calibration_outcome',
+                samples: [...samplesRef.current],
+                outcome,
+              });
               if (outcome.matchedTarget) {
                 completedRef.current = true;
+                void recorder?.flush(true);
                 onCalibrated({
                   calibrated: true,
                   referenceNote: 'G4',
@@ -90,22 +146,29 @@ export function CalibrationView({
                   );
                 }
                 samplesRef.current = [];
+                sampleMidiRef.current = null;
+                noteEmittedRef.current = false;
               }
             }
           }
         },
         onNoteDetected: () => {},
-        onError: (msg) => setErrorMsg(msg),
+        onError: (msg) => {
+          setErrorMsg(msg);
+          recorder?.pushEvent({ type: 'CALIBRATION_MIC_ERROR', message: msg });
+        },
       })
       .catch(() => {});
 
     return () => {
       engine.stop();
+      recorder?.stop();
     };
   }, [
     settings.inputMode,
     settings.micSensitivity,
     settings.micClarityThreshold,
+    debugEnabled,
     onCalibrated,
   ]);
 

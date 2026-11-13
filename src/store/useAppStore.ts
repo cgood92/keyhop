@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS: GameSettings = {
   penaltySeconds: 2.0,
   strictOctave: true,
   soundEffects: true,
-  micSensitivity: 0.003,
+  micSensitivity: 0.008,
   micClarityThreshold: 0.8,
 };
 
@@ -126,21 +126,33 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'keyhop-storage-v1',
-      version: 2,
+      version: 3,
       migrate: (persistedState: unknown, version: number) => {
         const state = (persistedState ?? {}) as Partial<AppState>;
-        if (version < 2 && state.settings) {
-          return {
-            ...state,
-            settings: {
-              ...DEFAULT_SETTINGS,
-              ...state.settings,
-              micSensitivity: 0.003,
-              micClarityThreshold: 0.8,
-            },
+        if (!state.settings) return state;
+
+        let nextSettings = state.settings;
+        if (version < 2) {
+          nextSettings = {
+            ...DEFAULT_SETTINGS,
+            ...nextSettings,
+            micSensitivity: 0.008,
+            micClarityThreshold: 0.8,
+          };
+        } else if (version < 3) {
+          nextSettings = {
+            ...DEFAULT_SETTINGS,
+            ...nextSettings,
+            micSensitivity:
+              nextSettings.micSensitivity <= 0.005
+                ? 0.008
+                : nextSettings.micSensitivity,
           };
         }
-        return state;
+        return {
+          ...state,
+          settings: nextSettings,
+        };
       },
     }
   )

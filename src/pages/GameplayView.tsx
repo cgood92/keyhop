@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Lightbulb, Pause, Play, RotateCcw, Usb, X } from 'lucide-react';
 import { Note } from 'tonal';
 import { PitchEngine } from '../audio/PitchEngine';
+import {
+  DebugSessionRecorder,
+  isDebugModeEnabled,
+} from '../audio/debugRecorder';
+import type { DebugRecorderStats } from '../audio/debugRecorder';
 import { playHitSfx, playWrongSfx } from '../audio/sfxSynth';
 import { FullscreenButton } from '../components/FullscreenButton';
 import { MicMeter } from '../components/MicMeter';
 import { StaffCanvas } from '../components/StaffCanvas';
 import { midiEngine } from '../midi/MidiEngine';
-import { buildRoundDeck, isNoteMatch } from '../music/notation';
+import { buildRoundDeck, isNoteMatch, parseNoteTarget } from '../music/notation';
 import { buildRoundResult, formatStopwatch } from '../music/scoring';
 import type {
   CalibrationState,
@@ -65,7 +70,9 @@ export function GameplayView({
   const [rms, setRms] = useState(0);
   const [heardNote, setHeardNote] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
+  const [debugStats, setDebugStats] = useState<DebugRecorderStats | null>(null);
 
+  const debugEnabled = isDebugModeEnabled();
   const themeCfg = getThemeConfig(theme);
 
   // Refs for low-latency input handler without stale closures
@@ -85,6 +92,12 @@ export function GameplayView({
   const wrongLockUntilRef = useRef(0);
   const lastAdvanceAtRef = useRef(0);
   const pitchEngineRef = useRef<PitchEngine | null>(null);
+  const debugRecorderRef = useRef<DebugSessionRecorder | null>(null);
+  const matchSnapshotCountRef = useRef(0);
+  const debugMetaRef = useRef({ level, settings, calibration, theme });
+  useEffect(() => {
+    debugMetaRef.current = { level, settings, calibration, theme };
+  }, [level, settings, calibration, theme]);
 
   // Acquire wake lock during active gameplay
   useEffect(() => {
@@ -120,7 +133,8 @@ export function GameplayView({
   }, [paused]);
 
   const handleRestart = useCallback(() => {
-    setDeck(buildRoundDeck(level.notes, level.repeats));
+    const nextDeck = buildRoundDeck(level.notes, level.repeats);
+    setDeck(nextDeck);
     setCurrentIndex(0);
     setWrongAttempts(0);
     setIsWrongFlash(false);
@@ -131,23 +145,76 @@ export function GameplayView({
     setElapsedSeconds(0);
     transitionLockRef.current = false;
     setPaused(false);
+    debugRecorderRef.current?.pushEvent({
+      type: 'ROUND_RESTART',
+      deck: nextDeck.map((n, i) => ({
+        index: i,
+        note: n.note,
+        midi: parseNoteTarget(n.note).midi,
+        staff: n.staff ?? null,
+      })),
+    });
   }, [level.notes, level.repeats]);
 
   const handleNoteInput = useCallback(
     (playedMidi: number) => {
-      if (pausedRef.current || transitionLockRef.current) return;
+      const now = performance.now();
       const activeDeck = deckRef.current;
       const idx = indexRef.current;
       const target = activeDeck[idx];
+      const playedNote = Note.fromMidi(playedMidi) || String(playedMidi);
+
+      if (pausedRef.current || transitionLockRef.current) {
+        debugRecorderRef.current?.pushEvent({
+          type: 'NOTE_INPUT_IGNORED_LOCK',
+          playedMidi,
+          playedNote,
+          paused: pausedRef.current,
+          transitionLock: transitionLockRef.current,
+          cardIndex: idx,
+          targetNote: target?.note ?? null,
+          msSinceLastAdvance:
+            lastAdvanceAtRef.current > 0 ? now - lastAdvanceAtRef.current : null,
+        });
+        return;
+      }
       if (!target) return;
+
+      const targetMidi = parseNoteTarget(target.note).midi;
+      const msSinceLastAdvance =
+        lastAdvanceAtRef.current > 0 ? now - lastAdvanceAtRef.current : null;
 
       if (isNoteMatch(playedMidi, target, settings.strictOctave)) {
         transitionLockRef.current = true;
-        if (settings.inputMode === 'mic' && settings.soundEffects) {
+        const suppressedMs =
+          settings.inputMode === 'mic' && settings.soundEffects ? 300 : 0;
+        if (suppressedMs > 0) {
           // Suppress mic briefly so speaker chime never feeds back as a wrong note
-          pitchEngineRef.current?.suppressFor(300);
+          pitchEngineRef.current?.suppressFor(suppressedMs);
         }
         playHitSfx(theme, settings.soundEffects);
+        debugRecorderRef.current?.pushEvent({
+          type: 'NOTE_INPUT_MATCH',
+          playedMidi,
+          playedNote,
+          cardIndex: idx,
+          targetNote: target.note,
+          targetMidi,
+          msSinceLastAdvance,
+          suppressedMs,
+          sfxPlayed: settings.soundEffects,
+        });
+        if (matchSnapshotCountRef.current < 4) {
+          matchSnapshotCountRef.current += 1;
+          debugRecorderRef.current?.dumpSnapshot('match_baseline', {
+            playedMidi,
+            playedNote,
+            cardIndex: idx,
+            targetNote: target.note,
+            targetMidi,
+            msSinceLastAdvance,
+          });
+        }
         setIsWrongFlash(false);
         setWrongNoteHint(null);
         setHitBurstId((n) => n + 1);
@@ -165,6 +232,11 @@ export function GameplayView({
             penaltySecondsPerError: settings.penaltySeconds,
             previousBestTime: previousBest?.bestTimeSeconds,
           });
+          debugRecorderRef.current?.pushEvent({
+            type: 'ROUND_COMPLETE',
+            result,
+          });
+          void debugRecorderRef.current?.flush(true);
           setTimeout(() => {
             onComplete(result);
           }, 220);
@@ -173,16 +245,71 @@ export function GameplayView({
             lastAdvanceAtRef.current = performance.now();
             setCurrentIndex(nextIdx);
             transitionLockRef.current = false;
+            const nextTarget = deckRef.current[nextIdx];
+            debugRecorderRef.current?.pushEvent({
+              type: 'CARD_ADVANCE',
+              cardIndex: nextIdx,
+              targetNote: nextTarget?.note ?? null,
+              targetMidi: nextTarget ? parseNoteTarget(nextTarget.note).midi : null,
+            });
           }, 110);
         }
       } else {
-        const now = performance.now();
         // Give previous piano string decay a brief grace period after card advance in mic mode
         if (settings.inputMode === 'mic' && now - lastAdvanceAtRef.current < 420) {
+          debugRecorderRef.current?.pushEvent({
+            type: 'NOTE_INPUT_IGNORED_GRACE',
+            playedMidi,
+            playedNote,
+            cardIndex: idx,
+            targetNote: target.note,
+            targetMidi,
+            msSinceLastAdvance,
+          });
+          debugRecorderRef.current?.dumpSnapshot('ignored_grace', {
+            playedMidi,
+            playedNote,
+            cardIndex: idx,
+            targetNote: target.note,
+            targetMidi,
+            msSinceLastAdvance,
+          });
           return;
         }
-        if (now < wrongLockUntilRef.current) return;
+        if (now < wrongLockUntilRef.current) {
+          debugRecorderRef.current?.pushEvent({
+            type: 'NOTE_INPUT_IGNORED_WRONG_LOCK',
+            playedMidi,
+            playedNote,
+            cardIndex: idx,
+            targetNote: target.note,
+            targetMidi,
+            msSinceLastAdvance,
+            wrongLockRemainingMs: wrongLockUntilRef.current - now,
+          });
+          return;
+        }
         wrongLockUntilRef.current = now + 550;
+
+        debugRecorderRef.current?.pushEvent({
+          type: 'NOTE_INPUT_WRONG_CHARGED',
+          playedMidi,
+          playedNote,
+          cardIndex: idx,
+          targetNote: target.note,
+          targetMidi,
+          msSinceLastAdvance,
+          wrongAttemptsAfter: wrongAttemptsRef.current + 1,
+        });
+        debugRecorderRef.current?.dumpSnapshot('wrong_charged', {
+          playedMidi,
+          playedNote,
+          cardIndex: idx,
+          targetNote: target.note,
+          targetMidi,
+          msSinceLastAdvance,
+          wrongAttemptsAfter: wrongAttemptsRef.current + 1,
+        });
 
         // Avoid speaker wrong-note audio in Mic mode so it doesn't loop back into mic
         if (settings.inputMode === 'midi') {
@@ -212,33 +339,111 @@ export function GameplayView({
   useEffect(() => {
     if (settings.inputMode !== 'mic') return;
 
+    let recorder: DebugSessionRecorder | null = null;
+    if (debugEnabled) {
+      const meta = debugMetaRef.current;
+      recorder = new DebugSessionRecorder('gameplay', meta.level.id);
+      debugRecorderRef.current = recorder;
+      matchSnapshotCountRef.current = 0;
+      recorder.onStatsChange(setDebugStats);
+      recorder.start({
+        screen: 'gameplay',
+        level: {
+          id: meta.level.id,
+          name: meta.level.name,
+          clef: meta.level.clef,
+          repeats: meta.level.repeats,
+        },
+        deck: deckRef.current.map((n, i) => ({
+          index: i,
+          note: n.note,
+          midi: parseNoteTarget(n.note).midi,
+          staff: n.staff ?? null,
+        })),
+        settings: meta.settings,
+        calibration: meta.calibration,
+        theme: meta.theme,
+      });
+    }
+
     const engine = new PitchEngine({
       rmsThreshold: settings.micSensitivity,
       clarityThreshold: settings.micClarityThreshold,
       requiredStableFrames: 3,
+      minStableMs: 42,
       centsOffset: calibration.centsOffset,
       semitoneOffset: calibration.semitoneOffset,
+      debug: debugEnabled,
     });
     pitchEngineRef.current = engine;
 
     engine
       .start({
+        onReady: (info) => {
+          recorder?.updateAudioInfo(info);
+        },
+        onRawAudio: debugEnabled
+          ? (samples, sr) => {
+              recorder?.pushRawAudio(samples, sr);
+            }
+          : undefined,
+        onPostFilterFrame: debugEnabled
+          ? (buf, sr, ts, analysis) => {
+              const idx = indexRef.current;
+              const target = deckRef.current[idx];
+              recorder?.pushPostFilterFrame(
+                buf,
+                sr,
+                ts,
+                analysis,
+                idx,
+                target?.note
+              );
+            }
+          : undefined,
         onFrame: (analysis) => {
           setRms(analysis.rms);
           if (analysis.activeMidi !== null) {
             setHeardNote(Note.fromMidi(analysis.activeMidi) || '');
           }
+          if (recorder) {
+            const idx = indexRef.current;
+            const target = deckRef.current[idx];
+            const now = performance.now();
+            recorder.pushEvent({
+              type: 'frame',
+              cardIndex: idx,
+              targetNote: target?.note ?? null,
+              targetMidi: target ? parseNoteTarget(target.note).midi : null,
+              paused: pausedRef.current,
+              transitionLock: transitionLockRef.current,
+              msSinceLastAdvance:
+                lastAdvanceAtRef.current > 0 ? now - lastAdvanceAtRef.current : null,
+              wrongLockRemainingMs:
+                now < wrongLockUntilRef.current ? wrongLockUntilRef.current - now : 0,
+              analysis,
+            });
+          }
         },
         onNoteDetected: (midi) => {
           handleNoteInput(midi);
         },
-        onError: (msg) => setInputError(msg),
+        onError: (msg) => {
+          setInputError(msg);
+          recorder?.pushEvent({ type: 'MIC_ERROR', message: msg });
+        },
       })
       .catch(() => {});
 
     return () => {
       pitchEngineRef.current = null;
       engine.stop();
+      if (recorder) {
+        recorder.stop();
+        if (debugRecorderRef.current === recorder) {
+          debugRecorderRef.current = null;
+        }
+      }
     };
   }, [
     settings.inputMode,
@@ -246,6 +451,7 @@ export function GameplayView({
     settings.micClarityThreshold,
     calibration.centsOffset,
     calibration.semitoneOffset,
+    debugEnabled,
     handleNoteInput,
   ]);
 
@@ -413,6 +619,25 @@ export function GameplayView({
           <div className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 px-4 py-1.5 text-xs font-bold text-cyan-200 backdrop-blur border border-white/15">
             <Usb size={14} />
             <span>MIDI Active {heardNote ? `• Last: ${heardNote}` : ''}</span>
+          </div>
+        )}
+        {debugEnabled && debugStats && (
+          <div className="inline-flex items-center gap-2 rounded-full bg-slate-950/80 px-3 py-1 text-[10px] font-mono font-bold text-emerald-300 border border-emerald-400/30 backdrop-blur">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                debugStats.lastError
+                  ? 'bg-rose-400'
+                  : debugStats.connected
+                    ? 'bg-emerald-400 animate-pulse'
+                    : 'bg-amber-300'
+              }`}
+            />
+            <span>
+              DEBUG REC • {debugStats.eventsSent} frames •{' '}
+              {(debugStats.audioBytesSent / 1024).toFixed(0)} KB audio •{' '}
+              {debugStats.snapshotsSent} snaps
+              {debugStats.lastError ? ` • ERR: ${debugStats.lastError}` : ''}
+            </span>
           </div>
         )}
       </footer>
